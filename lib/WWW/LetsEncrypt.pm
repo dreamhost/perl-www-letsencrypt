@@ -58,12 +58,9 @@ DreamHost
 
 =head1 LICENSE
 
-These modules are free software; and can be redistributed/modified under the
-same terms as Perl itself.
+These modules are free software; and can be redistributed/modified under the terms of the GPLv3.
 
 =over
-
-=item L<perlgpl>
 
 =back
 

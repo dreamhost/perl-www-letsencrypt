@@ -3,9 +3,9 @@ package WWW::LetsEncrypt::Message::Authorization;
 use strict;
 use warnings;
 
-
 use Carp qw(confess);
 
+use Digest::SHA;
 use HTTP::Request;
 use HTTP::Status qw(RC_CREATED RC_FORBIDDEN);
 use JSON;
@@ -70,6 +70,8 @@ WWW::LetsEncrypt::Message::Authorization
 
 =item http-01 (the renamed simpleHttp)
 
+=item dns-01
+
 =back
 
 =item domain
@@ -82,10 +84,9 @@ WWW::LetsEncrypt::Message::Authorization
 
 has 'challenge' => (
 	is       => 'rw',
-	isa      => 'Str',
+	isa      => enum(['http-01', 'dns-01']),
 	required => 1,
 	default  => 'http-01',
-	trigger  => sub { _validate_challenge(@_) },
 );
 
 has 'domain' => (
@@ -117,13 +118,28 @@ sub _process_response {
 #Internal object function that generates the challenge response data.
 #
 #Output
-#	$scalar string that is the response data.
+#	An array where the first value should be used for provisioning proof,
+#	and the second value should be submitted back via JWT to Boulder.
 
 sub _create_key_auth_token {
-	my ($self) = @_;
-	my $token = $self->_token;
+	my ($self)     = @_;
+	my $token      = $self->_token;
+	my $challenge  = $self->challenge;
 	my $thumbprint = $self->JWK->thumbprint();
-	return "$token.$thumbprint";
+	my $auth_value = "$token.$thumbprint";
+
+	# Boulder's API looks for the "$token.$thumb" value when we confirm
+	# that it should go look for the proof.  However, the proof value
+	# differs between the various challenges so we need to calculate that.
+	my $proof_value;
+	if ($challenge eq 'dns-01') {
+		$proof_value = encode_base64url(Digest::SHA::sha256($auth_value));
+	} else {
+		# such is the case with http-01.
+		$proof_value = $auth_value;
+	}
+
+	return ($proof_value, $auth_value);
 }
 
 sub _prep_request_step {
@@ -176,11 +192,13 @@ sub _request_step {
 
 			$self->_url($challenge_ref->{uri});
 			$self->_token($challenge_ref->{token});
-			$self->_key_auth_token($self->_create_key_auth_token());
+
+			my ($proof_val, $submit_val) = $self->_create_key_auth_token();
+			$self->_key_auth_token($submit_val);
 
 			$output_ref = {
 				token      => $self->_token,
-				content    => $self->_key_auth_token,
+				content    => $proof_val,
 				successful => 1,
 				finished   => 0,
 			};
@@ -334,21 +352,6 @@ sub _prep_step {
 		$self->_step('request');
 	}
 	return $self->$step_function;
-}
-
-# $Obj->_validate_challenge($new_val)
-#
-# Object method that checks to make sure the challenge method being set is allowable.
-#
-# Input
-#	$new_val - Scalar string that is the new challenge method
-# Output
-#	return 1 if successful, confesses otherwise
-
-sub _validate_challenge {
-	my ($self, $new_val) = @_;
-	return 1 if $new_val eq 'http-01';
-	confess "'$new_val' is not a valid challenge mode.";
 }
 
 __PACKAGE__->meta->make_immutable;
